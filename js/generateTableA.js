@@ -1,143 +1,67 @@
 /**
  * generateTableA.js
  * 依案件資料生成符合「提報修繕明細」格式的 Excel（表A）。
- * 格式依據範本實測：微軟正黑體 16pt 資料，外框 medium，內框 thin。
- * 合併方式：A 欄獨立合併、C–H 欄各自獨立合併、B 欄不合併（顯示品項序號）。
+ *
+ * 採用「載入範本→清除資料→填入新資料」方式，
+ * 確保字型、填色、框線、對齊等樣式完全繼承自範本，
+ * 不依賴 SheetJS 從零建立樣式（社群版從零建立樣式不穩定）。
  */
 
 async function generateTableA(cases, rocYear, month) {
-  const wb = XLSX.utils.book_new();
-  const ws = {};
-  const merges = [];
 
-  // ── 顏色 ──────────────────────────────────────────────────────────────────
-  const BLACK = '000000';
-  const WHITE = 'FFFFFF';
-  const TEAL  = '46BDC6';
-  const GRAY  = '808080';
+  // ── 1. 載入範本 ────────────────────────────────────────────────────────────
+  const resp = await fetch('./template/tableA_template.xlsx');
+  if (!resp.ok) throw new Error('無法載入表A範本（template/tableA_template.xlsx）');
+  const buf = await resp.arrayBuffer();
+  const wb  = XLSX.read(new Uint8Array(buf), { type: 'array', cellStyles: true });
 
-  // ── 框線 ──────────────────────────────────────────────────────────────────
-  const MED  = { style: 'medium', color: { rgb: BLACK } };
-  const THIN = { style: 'thin',   color: { rgb: BLACK } };
+  const wsName = wb.SheetNames[0];
+  const ws     = wb.Sheets[wsName];
 
-  const allMed = { top: MED, bottom: MED, left: MED, right: MED };
+  // ── 2. 在刪除資料前，儲存各需要位置的樣式索引 ─────────────────────────────
+  //   SheetJS 讀取時，cell.s 是 styles.xml 的 xf 索引（整數），
+  //   只要把這個整數指派給新儲存格，寫出時就會套用同一個樣式定義。
+  const readS = (r, c) => {
+    const cell = ws[XLSX.utils.encode_cell({ r, c })];
+    return cell ? cell.s : undefined;
+  };
 
-  // 資料列：A欄左緣 / N欄右緣用 medium，其餘 thin
-  function dataBorder(c) {
-    return {
-      top:    THIN,
-      bottom: THIN,
-      left:   c === 0  ? MED : THIN,
-      right:  c === 13 ? MED : THIN,
-    };
-  }
+  // 第一筆資料列（row index 3 = Excel row 4）：各欄樣式
+  const S1 = {};
+  for (let c = 0; c <= 13; c++) S1[c] = readS(3, c);
 
-  // ── 欄位對齊（依範本實測） ────────────────────────────────────────────────
-  // F(5)=地址、G(6)=故障說明、J(9)=品項 → 靠左 + 自動換行
-  // E(4)=站別、K(10)=單位、L(11)=數量 → 置中 + 自動換行
-  // 其餘 → 置中
-  function colAlignment(c) {
-    if (c === 5 || c === 6 || c === 9) {
-      return { horizontal: 'left',   vertical: 'center', wrapText: true };
+  // 多品項第二列（row index 8 = Excel row 9，範本 case 5 的第2個品項）：各欄樣式
+  const S2 = {};
+  for (let c = 0; c <= 13; c++) S2[c] = readS(8, c);
+
+  // 統計列（row index 31 = Excel row 32）：各欄樣式
+  const SS = {};
+  for (let c = 0; c <= 13; c++) SS[c] = readS(31, c);
+
+  // ── 3. 清除所有資料列（row 3 以後） ───────────────────────────────────────
+  const origRange = XLSX.utils.decode_range(ws['!ref'] || 'A1:N50');
+  for (let r = 3; r <= Math.max(origRange.e.r, 45); r++) {
+    for (let c = 0; c <= 13; c++) {
+      delete ws[XLSX.utils.encode_cell({ r, c })];
     }
-    if (c === 4 || c === 10 || c === 11) {
-      return { horizontal: 'center', vertical: 'center', wrapText: true };
-    }
-    return { horizontal: 'center', vertical: 'center', wrapText: false };
   }
 
-  // ── 樣式 ──────────────────────────────────────────────────────────────────
+  // ── 4. 清除資料合併（保留表頭 row 0–2 的合併） ────────────────────────────
+  ws['!merges'] = (ws['!merges'] || []).filter(m => m.e.r < 3);
 
-  // 標題列（第1–2列）：24pt 青色底白字
-  const titleStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 24, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center', wrapText: false },
-    border:    allMed,
-  };
+  // ── 5. 更新月份文字（G2 = row 1, col 6） ─────────────────────────────────
+  const g2 = ws[XLSX.utils.encode_cell({ r: 1, c: 6 })];
+  if (g2) g2.v = `${rocYear}年${month}月份月結`;
 
-  // 欄位標題（第3列）：16pt 青色底白字
-  const headerStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-    border:    allMed,
-  };
-
-  // 欄位標題 J（品項）、M（單價）：灰底白字 12pt
-  const grayHeaderStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: GRAY } },
-    font:      { name: 'Arial', sz: 12, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center', wrapText: false },
-    border:    allMed,
-  };
-
-  // A 欄（案號）：青色底白字，左緣 medium
-  const caseNoStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center' },
-    border:    { top: THIN, bottom: THIN, left: MED, right: THIN },
-  };
-
-  // B 欄（品項序號）：青色底白字粗體（欄位隱藏）
-  const bColStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center' },
-    border:    dataBorder(1),
-  };
-
-  // 一般資料欄（依欄位決定對齊與邊框）
-  function dataStyle(c) {
-    return {
-      font:      { name: '微軟正黑體', sz: 16 },
-      alignment: colAlignment(c),
-      border:    dataBorder(c),
-    };
-  }
-
-  // 數字欄（置中、千分位）
-  function numStyle(c) {
-    return {
-      font:      { name: '微軟正黑體', sz: 16 },
-      alignment: { horizontal: 'center', vertical: 'center' },
-      numFmt:    '#,##0',
-      border:    dataBorder(c),
-    };
-  }
-
-  // ── 輔助函式 ──────────────────────────────────────────────────────────────
-  const setCell = (r, c, value, style, type) => {
+  // ── 6. 插入資料列 ─────────────────────────────────────────────────────────
+  // styleIdx 傳 undefined 則取 S1[c] 預設值
+  const setCell = (r, c, value, styleIdx, type) => {
     const addr = XLSX.utils.encode_cell({ r, c });
+    const s = styleIdx !== undefined ? styleIdx : S1[c];
     const t = type !== undefined ? type : (typeof value === 'number' ? 'n' : 's');
-    ws[addr] = { v: (value !== undefined && value !== null) ? value : '', t, s: style };
+    ws[addr] = { v: (value !== undefined && value !== null) ? value : '', t, s };
   };
 
-  // ── Row 0：標題 "提報修繕明細"，合併 A1:N1 ───────────────────────────────
-  setCell(0, 0, '提報修繕明細', titleStyle);
-  for (let c = 1; c <= 13; c++) setCell(0, c, '', titleStyle);
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } });
-
-  // ── Row 1：公司名稱（A2:F2）＋月份（G2:N2）────────────────────────────────
-  setCell(1, 0, '晟晁物業管理顧問股份有限公司', titleStyle);
-  for (let c = 1; c <= 5; c++) setCell(1, c, '', titleStyle);
-  merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 5 } });
-
-  setCell(1, 6, `${rocYear}年${month}月份月結`, titleStyle);
-  for (let c = 7; c <= 13; c++) setCell(1, c, '', titleStyle);
-  merges.push({ s: { r: 1, c: 6 }, e: { r: 1, c: 13 } });
-
-  // ── Row 2：欄位標題 ───────────────────────────────────────────────────────
-  const colHeaders = [
-    '案號', '編號', '報修日期', '報修單號', '站別', '地址',
-    '故障說明', '完工日期', '合約項次', '品項', '單位', '數量', '單價', '未稅金額小計(1)',
-  ];
-  colHeaders.forEach((h, c) => {
-    setCell(2, c, h, (c === 9 || c === 12) ? grayHeaderStyle : headerStyle);
-  });
-
-  // ── 資料列（Row 3 起）────────────────────────────────────────────────────
   let currentRow = 3;
 
   cases.forEach((cas, caseIdx) => {
@@ -149,131 +73,96 @@ async function generateTableA(cases, rocYear, month) {
       const r = currentRow;
 
       if (itemIdx === 0) {
-        // 第一個品項列：填入 A–H 案件欄位
-        setCell(r, 0, caseNo,       caseNoStyle,  'n');
-        setCell(r, 1, 1,            bColStyle,     'n');
-        setCell(r, 2, cas.報修日期,  dataStyle(2));
-        setCell(r, 3, cas.JDM案號,   dataStyle(3));
-        setCell(r, 4, cas.站別,      dataStyle(4));
-        setCell(r, 5, cas.地址,      dataStyle(5));
-        setCell(r, 6, cas.故障說明,  dataStyle(6));
-        setCell(r, 7, cas.完工日期,  dataStyle(7));
+        // 第一個品項列：填入 A–H 案件資訊
+        setCell(r, 0, caseNo,       S1[0],  'n');
+        setCell(r, 1, 1,            S1[1],  'n');
+        setCell(r, 2, cas.報修日期,  S1[2]);
+        setCell(r, 3, cas.JDM案號,   S1[3]);
+        setCell(r, 4, cas.站別,      S1[4]);
+        setCell(r, 5, cas.地址,      S1[5]);
+        setCell(r, 6, cas.故障說明,  S1[6]);
+        setCell(r, 7, cas.完工日期,  S1[7]);
       } else {
-        // 非首列：A 和 C–H 填空白（保持框線，實際由合併決定顯示）
-        setCell(r, 0, '', { font: { name: '微軟正黑體', sz: 16 }, border: dataBorder(0) });
+        // 後續品項列：A 和 C–H 填空白（合併後不顯示）
+        setCell(r, 0, '', S2[0] ?? S1[0]);
+        setCell(r, 1, itemIdx + 1, S2[1] ?? S1[1], 'n');
         for (let c = 2; c <= 7; c++) {
-          setCell(r, c, '', { font: { name: '微軟正黑體', sz: 16 }, border: dataBorder(c) });
+          setCell(r, c, '', S2[c] ?? S1[c]);
         }
-        // B 欄：顯示品項序號（不合併）
-        setCell(r, 1, itemIdx + 1, bColStyle, 'n');
       }
 
-      // 每列都填：I–N 品項欄位
-      setCell(r, 8,  item.合約項次, dataStyle(8));
-      setCell(r, 9,  item.品項,     dataStyle(9));
-      setCell(r, 10, item.單位,     dataStyle(10));
-      setCell(r, 11, item.數量,     numStyle(11),  'n');
-      setCell(r, 12, item.單價,     numStyle(12),  'n');
-      setCell(r, 13, item.未稅小計, numStyle(13),  'n');
+      // I–N 每列都填品項資料
+      setCell(r, 8,  item.合約項次, S1[8]);
+      setCell(r, 9,  item.品項,     S1[9]);
+      setCell(r, 10, item.單位,     S1[10]);
+      setCell(r, 11, item.數量,     S1[11], 'n');
+      setCell(r, 12, item.單價,     S1[12], 'n');
+      setCell(r, 13, item.未稅小計, S1[13], 'n');
 
       currentRow++;
     });
 
-    // ── 多品項案件合併邏輯 ─────────────────────────────────────────────────
-    // 範本做法：A 欄獨立合併、C–H 欄各自獨立合併、B 欄不合併
+    // 多品項案件：A 欄獨立合併，C–H 各自獨立合併，B 不合併
     if (items.length > 1) {
       const endRow = startRow + items.length - 1;
-      // A 欄（案號）
-      merges.push({ s: { r: startRow, c: 0 }, e: { r: endRow, c: 0 } });
-      // C–H 欄（報修日期、報修單號、站別、地址、故障說明、完工日期）
+      ws['!merges'].push({ s: { r: startRow, c: 0 }, e: { r: endRow, c: 0 } });
       for (let c = 2; c <= 7; c++) {
-        merges.push({ s: { r: startRow, c }, e: { r: endRow, c } });
+        ws['!merges'].push({ s: { r: startRow, c }, e: { r: endRow, c } });
       }
     }
   });
 
-  // ── 統計行 ────────────────────────────────────────────────────────────────
-  // 結構：A–H 空白（無填色）、I–L 合併顯示「總計」（青色）、M 空白（青色）、N SUM 公式（青色）
-  const statsRow = currentRow;
-  const lastDataRowExcel = currentRow; // 0-indexed currentRow = 1-indexed 最後資料列
+  // ── 7. 統計行 ─────────────────────────────────────────────────────────────
+  const statsRow      = currentRow;
+  const lastDataExcel = currentRow; // 0-indexed statsRow = 1-indexed 最後資料列號
 
-  // 計算總金額（作為公式的預算值）
   const totalSum = Math.round(
     cases.reduce((s, cas) => s + cas.items.reduce((ss, item) => ss + (Number(item.未稅小計) || 0), 0), 0)
   );
 
-  // A–H：空白，medium 下緣
+  // A–H：空白，用範本統計列樣式
   for (let c = 0; c <= 7; c++) {
-    setCell(statsRow, c, '', {
-      font:   { name: '微軟正黑體', sz: 16 },
-      border: { top: THIN, bottom: MED, left: c === 0 ? MED : THIN, right: THIN },
-    });
+    setCell(statsRow, c, '', SS[c] ?? S1[c]);
   }
 
-  // I–L：合併，「總計」，青色底白字
-  const statsTealStyle = {
-    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
-    alignment: { horizontal: 'center', vertical: 'center' },
-    border:    { top: THIN, bottom: MED, left: THIN, right: THIN },
-  };
-  setCell(statsRow, 8, '總計', statsTealStyle);
-  for (let c = 9; c <= 11; c++) setCell(statsRow, c, '', statsTealStyle);
-  merges.push({ s: { r: statsRow, c: 8 }, e: { r: statsRow, c: 11 } });
+  // I–L：合併「總計」，用範本 I32 樣式
+  const sTotalText = SS[8] ?? S1[0];
+  for (let c = 8; c <= 11; c++) {
+    setCell(statsRow, c, c === 8 ? '總計' : '', sTotalText);
+  }
+  ws['!merges'].push({ s: { r: statsRow, c: 8 }, e: { r: statsRow, c: 11 } });
 
-  // M：空白，青色底
-  setCell(statsRow, 12, '', statsTealStyle);
+  // M：空白，用範本 M32 樣式
+  setCell(statsRow, 12, '', SS[12] ?? S1[0]);
 
-  // N：SUM 公式，青色底，右緣 medium
+  // N：SUM 公式（含預算值），用範本 N32 樣式
   const nAddr = XLSX.utils.encode_cell({ r: statsRow, c: 13 });
   ws[nAddr] = {
-    f: `SUM(N4:N${lastDataRowExcel})`,
+    f: `SUM(N4:N${lastDataExcel})`,
     v: totalSum,
     t: 'n',
-    s: {
-      fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-      font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
-      alignment: { horizontal: 'center', vertical: 'center' },
-      numFmt:    '#,##0',
-      border:    { top: THIN, bottom: MED, left: THIN, right: MED },
-    },
+    s: SS[13] ?? S1[0],
   };
 
   currentRow++; // 統計行佔一列
 
-  // ── 工作表屬性 ────────────────────────────────────────────────────────────
+  // ── 8. 更新工作表屬性 ─────────────────────────────────────────────────────
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: currentRow - 1, c: 13 } });
-  ws['!merges'] = merges;
 
-  // 欄寬（依範本實測值）
-  ws['!cols'] = [
-    { wch: 8.332  },                      // A 案號
-    { wch: 8.887,  hidden: true },        // B 品項序號（隱藏）
-    { wch: 30.0   },                      // C 報修日期
-    { wch: 27.109 },                      // D 報修單號
-    { wch: 25.664 },                      // E 站別
-    { wch: 30.332 },                      // F 地址
-    { wch: 80.664 },                      // G 故障說明
-    { wch: 25.664 },                      // H 完工日期
-    { wch: 24.555 },                      // I 合約項次
-    { wch: 24.555, hidden: true },        // J 品項（隱藏）
-    { wch: 10.664 },                      // K 單位
-    { wch: 14.109 },                      // L 數量
-    { wch: 17.664, hidden: true },        // M 單價（隱藏）
-    { wch: 30.664 },                      // N 未稅金額小計
-  ];
+  // 列高：保留表頭 3 列原始高度，資料列統一設 49.95pt
+  const origRows = ws['!rows'] || [];
+  const newRows  = [];
+  for (let r = 0; r < 3; r++) newRows[r] = origRows[r] || { hpt: 49.95 };
+  for (let r = 3; r < currentRow; r++) newRows[r] = { hpt: 49.95 };
+  ws['!rows'] = newRows;
 
-  // 列高（依範本實測值）
-  ws['!rows'] = [];
-  ws['!rows'][0] = { hpt: 50.1  };   // 標題列
-  ws['!rows'][1] = { hpt: 49.8  };   // 公司/月份列
-  ws['!rows'][2] = { hpt: 49.95 };   // 欄位標題列
-  for (let r = 3; r < currentRow; r++) {
-    ws['!rows'][r] = { hpt: 49.95 };
+  // ── 9. 重命名工作表 ───────────────────────────────────────────────────────
+  const newName = `${rocYear}.${String(month).padStart(2, '0')}`;
+  if (wsName !== newName) {
+    wb.SheetNames[0] = newName;
+    wb.Sheets[newName] = wb.Sheets[wsName];
+    delete wb.Sheets[wsName];
   }
-
-  const sheetName = `${rocYear}.${String(month).padStart(2, '0')}`;
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
 
   return XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
 }
