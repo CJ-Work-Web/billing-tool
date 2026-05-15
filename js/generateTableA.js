@@ -1,7 +1,8 @@
 /**
  * generateTableA.js
  * 依案件資料生成符合「提報修繕明細」格式的 Excel（表A）。
- * 格式依據範本實測：微軟正黑體、外框 medium、內框 thin。
+ * 格式依據範本實測：微軟正黑體 16pt 資料，外框 medium，內框 thin。
+ * 合併方式：A 欄獨立合併、C–H 欄各自獨立合併、B 欄不合併（顯示品項序號）。
  */
 
 async function generateTableA(cases, rocYear, month) {
@@ -31,9 +32,23 @@ async function generateTableA(cases, rocYear, month) {
     };
   }
 
+  // ── 欄位對齊（依範本實測） ────────────────────────────────────────────────
+  // F(5)=地址、G(6)=故障說明、J(9)=品項 → 靠左 + 自動換行
+  // E(4)=站別、K(10)=單位、L(11)=數量 → 置中 + 自動換行
+  // 其餘 → 置中
+  function colAlignment(c) {
+    if (c === 5 || c === 6 || c === 9) {
+      return { horizontal: 'left',   vertical: 'center', wrapText: true };
+    }
+    if (c === 4 || c === 10 || c === 11) {
+      return { horizontal: 'center', vertical: 'center', wrapText: true };
+    }
+    return { horizontal: 'center', vertical: 'center', wrapText: false };
+  }
+
   // ── 樣式 ──────────────────────────────────────────────────────────────────
 
-  // 標題列（第1~2列）：24pt 青色底白字
+  // 標題列（第1–2列）：24pt 青色底白字
   const titleStyle = {
     fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
     font:      { name: '微軟正黑體', sz: 24, bold: true, color: { rgb: WHITE } },
@@ -57,38 +72,36 @@ async function generateTableA(cases, rocYear, month) {
     border:    allMed,
   };
 
-  // 案號欄（A欄）：青色底白字置中
+  // A 欄（案號）：青色底白字，左緣 medium
   const caseNoStyle = {
     fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 11, bold: true, color: { rgb: WHITE } },
+    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
     alignment: { horizontal: 'center', vertical: 'center' },
     border:    { top: THIN, bottom: THIN, left: MED, right: THIN },
   };
 
-  // B 欄（編號）：青色底白字
+  // B 欄（品項序號）：青色底白字粗體（欄位隱藏）
   const bColStyle = {
     fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
-    font:      { name: '微軟正黑體', sz: 11, color: { rgb: WHITE } },
+    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
     alignment: { horizontal: 'center', vertical: 'center' },
     border:    dataBorder(1),
   };
 
-  // 一般文字資料欄（依欄位決定邊框）
+  // 一般資料欄（依欄位決定對齊與邊框）
   function dataStyle(c) {
     return {
-      fill:      { patternType: 'none' },
-      font:      { name: '微軟正黑體', sz: 11 },
-      alignment: { horizontal: 'left', vertical: 'center', wrapText: true },
+      font:      { name: '微軟正黑體', sz: 16 },
+      alignment: colAlignment(c),
       border:    dataBorder(c),
     };
   }
 
-  // 數字欄（靠右、千分位）
+  // 數字欄（置中、千分位）
   function numStyle(c) {
     return {
-      fill:      { patternType: 'none' },
-      font:      { name: '微軟正黑體', sz: 11 },
-      alignment: { horizontal: 'right', vertical: 'center' },
+      font:      { name: '微軟正黑體', sz: 16 },
+      alignment: { horizontal: 'center', vertical: 'center' },
       numFmt:    '#,##0',
       border:    dataBorder(c),
     };
@@ -121,8 +134,7 @@ async function generateTableA(cases, rocYear, month) {
     '故障說明', '完工日期', '合約項次', '品項', '單位', '數量', '單價', '未稅金額小計(1)',
   ];
   colHeaders.forEach((h, c) => {
-    const style = (c === 9 || c === 12) ? grayHeaderStyle : headerStyle;
-    setCell(2, c, h, style);
+    setCell(2, c, h, (c === 9 || c === 12) ? grayHeaderStyle : headerStyle);
   });
 
   // ── 資料列（Row 3 起）────────────────────────────────────────────────────
@@ -147,14 +159,12 @@ async function generateTableA(cases, rocYear, month) {
         setCell(r, 6, cas.故障說明,  dataStyle(6));
         setCell(r, 7, cas.完工日期,  dataStyle(7));
       } else {
-        // 合併範圍後續列：填空白儲存格保持框線正確
-        for (let c = 0; c <= 7; c++) {
-          setCell(r, c, '', {
-            fill:   { patternType: 'none' },
-            font:   { name: '微軟正黑體', sz: 11 },
-            border: dataBorder(c),
-          });
+        // 非首列：A 和 C–H 填空白（保持框線，實際由合併決定顯示）
+        setCell(r, 0, '', { font: { name: '微軟正黑體', sz: 16 }, border: dataBorder(0) });
+        for (let c = 2; c <= 7; c++) {
+          setCell(r, c, '', { font: { name: '微軟正黑體', sz: 16 }, border: dataBorder(c) });
         }
+        // B 欄：顯示品項序號（不合併）
         setCell(r, 1, itemIdx + 1, bColStyle, 'n');
       }
 
@@ -169,14 +179,67 @@ async function generateTableA(cases, rocYear, month) {
       currentRow++;
     });
 
-    // 多品項案件：合併 A–H（欄 0–7）
+    // ── 多品項案件合併邏輯 ─────────────────────────────────────────────────
+    // 範本做法：A 欄獨立合併、C–H 欄各自獨立合併、B 欄不合併
     if (items.length > 1) {
-      merges.push({
-        s: { r: startRow, c: 0 },
-        e: { r: startRow + items.length - 1, c: 7 },
-      });
+      const endRow = startRow + items.length - 1;
+      // A 欄（案號）
+      merges.push({ s: { r: startRow, c: 0 }, e: { r: endRow, c: 0 } });
+      // C–H 欄（報修日期、報修單號、站別、地址、故障說明、完工日期）
+      for (let c = 2; c <= 7; c++) {
+        merges.push({ s: { r: startRow, c }, e: { r: endRow, c } });
+      }
     }
   });
+
+  // ── 統計行 ────────────────────────────────────────────────────────────────
+  // 結構：A–H 空白（無填色）、I–L 合併顯示「總計」（青色）、M 空白（青色）、N SUM 公式（青色）
+  const statsRow = currentRow;
+  const lastDataRowExcel = currentRow; // 0-indexed currentRow = 1-indexed 最後資料列
+
+  // 計算總金額（作為公式的預算值）
+  const totalSum = Math.round(
+    cases.reduce((s, cas) => s + cas.items.reduce((ss, item) => ss + (Number(item.未稅小計) || 0), 0), 0)
+  );
+
+  // A–H：空白，medium 下緣
+  for (let c = 0; c <= 7; c++) {
+    setCell(statsRow, c, '', {
+      font:   { name: '微軟正黑體', sz: 16 },
+      border: { top: THIN, bottom: MED, left: c === 0 ? MED : THIN, right: THIN },
+    });
+  }
+
+  // I–L：合併，「總計」，青色底白字
+  const statsTealStyle = {
+    fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
+    font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border:    { top: THIN, bottom: MED, left: THIN, right: THIN },
+  };
+  setCell(statsRow, 8, '總計', statsTealStyle);
+  for (let c = 9; c <= 11; c++) setCell(statsRow, c, '', statsTealStyle);
+  merges.push({ s: { r: statsRow, c: 8 }, e: { r: statsRow, c: 11 } });
+
+  // M：空白，青色底
+  setCell(statsRow, 12, '', statsTealStyle);
+
+  // N：SUM 公式，青色底，右緣 medium
+  const nAddr = XLSX.utils.encode_cell({ r: statsRow, c: 13 });
+  ws[nAddr] = {
+    f: `SUM(N4:N${lastDataRowExcel})`,
+    v: totalSum,
+    t: 'n',
+    s: {
+      fill:      { patternType: 'solid', fgColor: { rgb: TEAL } },
+      font:      { name: '微軟正黑體', sz: 16, bold: true, color: { rgb: WHITE } },
+      alignment: { horizontal: 'center', vertical: 'center' },
+      numFmt:    '#,##0',
+      border:    { top: THIN, bottom: MED, left: THIN, right: MED },
+    },
+  };
+
+  currentRow++; // 統計行佔一列
 
   // ── 工作表屬性 ────────────────────────────────────────────────────────────
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: currentRow - 1, c: 13 } });
@@ -185,7 +248,7 @@ async function generateTableA(cases, rocYear, month) {
   // 欄寬（依範本實測值）
   ws['!cols'] = [
     { wch: 8.332  },                      // A 案號
-    { wch: 8.887,  hidden: true },        // B 編號（隱藏）
+    { wch: 8.887,  hidden: true },        // B 品項序號（隱藏）
     { wch: 30.0   },                      // C 報修日期
     { wch: 27.109 },                      // D 報修單號
     { wch: 25.664 },                      // E 站別
