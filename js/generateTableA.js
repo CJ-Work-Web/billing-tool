@@ -47,14 +47,12 @@ async function generateTableA(cases, rocYear, month) {
   // ── 3. 清除所有資料列（Excel row 4 以後）──────────────────────────────────
   // 先解除範本中的所有合併儲存格，否則 spliceRows 可能殘留舊合併定義，
   // 導致後續 mergeCells 拋出 "Cannot merge already merged cells"
+  // ExcelJS 的 unMergeCells 只接受左上角位址（如 "A4"）
+  // ws._merges 的 key 正好就是左上角位址，直接用即可
   try {
     const mergeKeys = Object.keys(ws._merges || {});
     mergeKeys.forEach(key => {
-      const merge = ws._merges[key];
-      if (merge && merge.model) {
-        const { top, left, bottom, right } = merge.model;
-        try { ws.unMergeCells(top, left, bottom, right); } catch(e) {}
-      }
+      try { ws.unMergeCells(key); } catch(e) {}
     });
   } catch(e) {}
 
