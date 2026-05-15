@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>計價明細產製工具</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.18.5/package/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+  <header class="bg-white border-b border-slate-200 px-6 py-4 mb-6 shadow-sm">
+    <h1 class="text-xl font-black text-slate-800">計價明細產製工具</h1>
+    <p class="text-sm text-slate-500 mt-0.5">MRT 維修案件月度計價作業 — 表A生成 / 表B比對</p>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 pb-16">
+
+    <!-- Step 1 -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-4">
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center text-sm font-black shrink-0">1</div>
+        <h2 class="text-base font-black text-slate-800">上傳計價明細原始資料</h2>
+      </div>
+
+      <div class="space-y-4">
+        <label class="block">
+          <span class="text-sm font-bold text-slate-600 mb-1.5 block">計價明細 Excel（從 MRT-JDM-WORK 選擇「計價明細」模式匯出）</span>
+          <input type="file" id="inputFile" accept=".xlsx,.xls"
+            class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer border border-slate-200 rounded-xl p-2 bg-white" />
+        </label>
+
+        <div class="flex gap-3">
+          <label class="flex-1">
+            <span class="text-sm font-bold text-slate-600 mb-1.5 block">年份（民國）</span>
+            <select id="yearSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 bg-white"></select>
+          </label>
+          <label class="flex-1">
+            <span class="text-sm font-bold text-slate-600 mb-1.5 block">月份</span>
+            <select id="monthSelect" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-100 bg-white"></select>
+          </label>
+        </div>
+
+        <button id="loadBtn"
+          class="px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-black text-sm hover:bg-emerald-700 transition active:scale-95 shadow-sm">
+          載入資料
+        </button>
+
+        <div id="step1Result" class="hidden rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-800 font-bold"></div>
+        <div id="step1Error" class="hidden rounded-xl bg-rose-50 border border-rose-200 p-4 text-sm text-rose-700"></div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div id="step2Card" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-4 opacity-40 pointer-events-none transition-opacity">
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-8 h-8 rounded-full bg-slate-300 text-white flex items-center justify-center text-sm font-black shrink-0">2</div>
+        <h2 class="text-base font-black text-slate-800">預覽並下載表A（修繕明細）</h2>
+      </div>
+
+      <div id="previewWrap" class="overflow-x-auto rounded-xl border border-slate-200 mb-4 max-h-96 overflow-y-auto">
+        <table class="text-xs w-full">
+          <thead class="bg-[#46BDC6] text-white sticky top-0">
+            <tr>
+              <th class="px-2 py-2 text-center whitespace-nowrap">案號</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">報修日期</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">報修單號</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">站別</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap min-w-[120px]">地址</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap min-w-[200px]">故障說明</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">完工日期</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">合約項次</th>
+              <th class="px-2 py-2 text-left whitespace-nowrap">單位</th>
+              <th class="px-2 py-2 text-right whitespace-nowrap">數量</th>
+              <th class="px-2 py-2 text-right whitespace-nowrap">未稅小計</th>
+            </tr>
+          </thead>
+          <tbody id="previewBody">
+            <tr><td colspan="11" class="text-center text-slate-400 py-8 text-sm">請先完成步驟一</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <button id="downloadABtn"
+          class="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-black text-sm hover:bg-blue-700 transition active:scale-95 shadow-sm">
+          下載表A Excel
+        </button>
+        <span id="downloadAStatus" class="text-sm text-slate-500"></span>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div id="step3Card" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 opacity-40 pointer-events-none transition-opacity">
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-8 h-8 rounded-full bg-slate-300 text-white flex items-center justify-center text-sm font-black shrink-0">3</div>
+        <h2 class="text-base font-black text-slate-800">上傳表B（總表）並執行比對</h2>
+      </div>
+
+      <div class="space-y-4">
+        <label class="block">
+          <span class="text-sm font-bold text-slate-600 mb-1.5 block">表B 總表 Excel（JDM 系統生成的月份請款明細單）</span>
+          <input type="file" id="tableBFile" accept=".xlsx,.xls"
+            class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100 cursor-pointer border border-slate-200 rounded-xl p-2 bg-white" />
+        </label>
+
+        <button id="compareBtn"
+          class="px-6 py-2.5 bg-violet-600 text-white rounded-xl font-black text-sm hover:bg-violet-700 transition active:scale-95 shadow-sm">
+          執行比對
+        </button>
+
+        <div id="compareResult" class="hidden space-y-3">
+          <div id="warningBox" class="hidden rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800 space-y-1"></div>
+
+          <p class="text-sm font-bold text-slate-600">比對結果（B項修繕欄位）</p>
+          <div class="overflow-x-auto rounded-xl border border-slate-200">
+            <table class="text-xs w-full">
+              <thead class="bg-slate-100 text-slate-600">
+                <tr>
+                  <th class="px-3 py-2 text-left whitespace-nowrap">項次</th>
+                  <th class="px-3 py-2 text-left whitespace-nowrap min-w-[160px]">項目名稱</th>
+                  <th class="px-3 py-2 text-right whitespace-nowrap">表A合計(未稅)</th>
+                  <th class="px-3 py-2 text-right whitespace-nowrap">表B複價</th>
+                  <th class="px-3 py-2 text-center whitespace-nowrap">狀態</th>
+                  <th class="px-3 py-2 text-left whitespace-nowrap">填入備註</th>
+                </tr>
+              </thead>
+              <tbody id="diffBody"></tbody>
+            </table>
+          </div>
+
+          <div class="flex items-center gap-4 pt-1">
+            <button id="downloadBBtn"
+              class="px-6 py-2.5 bg-rose-600 text-white rounded-xl font-black text-sm hover:bg-rose-700 transition active:scale-95 shadow-sm">
+              下載處理後的表B
+            </button>
+            <span id="downloadBStatus" class="text-sm text-slate-500"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="./js/parseInput.js"></script>
+  <script src="./js/generateTableA.js"></script>
+  <script src="./js/processTableB.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
