@@ -178,7 +178,7 @@ document.getElementById('compareBtn').addEventListener('click', async () => {
 
   try {
     const buf = await fileInput.files[0].arrayBuffer();
-    const { results, warnings, outputBytes } = processTableB(buf, appCases);
+    const { results, warnings, outputBytes } = await processTableB(buf, appCases);
 
     processedBBytes = outputBytes;
     renderDiffTable(results, warnings);

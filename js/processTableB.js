@@ -3,14 +3,16 @@
  * 1. 以表A的合約項次加總未稅小計，比對表B的複價
  * 2. 金額不符的行標記紅色底色
  * 3. 將表A案號填入表B的備註欄
+ *
+ * 改用 ExcelJS 讀寫，確保原始格式完整保留。
  */
 
 const CONTRACT_CODE_RE = /^\d{2}-\d{2}-\d{2}$/;
 
-function processTableB(tableBArrayBuffer, cases) {
-  const wb = XLSX.read(new Uint8Array(tableBArrayBuffer), { type: 'array', cellStyles: true });
-  const wsName = wb.SheetNames[0];
-  const ws = wb.Sheets[wsName];
+async function processTableB(tableBArrayBuffer, cases) {
+  const ExcelJS  = window.ExcelJS;
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(tableBArrayBuffer);
 
   // ── 建立表A的合約項次彙總 map ──────────────────────────────────────────
   // key: 合約項次代碼  value: { sum: number, caseNos: Set<number> }
@@ -27,65 +29,67 @@ function processTableB(tableBArrayBuffer, cases) {
     });
   });
 
-  // ── 掃描表B的 B 欄，找出合約項次列 ─────────────────────────────────────
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:Z200');
+  // ── 取第一個工作表（當月資料）─────────────────────────────────────────
+  const ws = workbook.worksheets[0];
   const results  = [];
   const warnings = [];
 
-  for (let r = range.s.r; r <= range.e.r; r++) {
-    const bAddr = XLSX.utils.encode_cell({ r, c: 1 }); // B 欄
-    const bCell = ws[bAddr];
-    if (!bCell) continue;
+  ws.eachRow((row, rowNumber) => {
+    // B 欄（index 2）
+    const bCell = row.getCell(2);
+    const rawB  = bCell.value;
+    if (rawB === null || rawB === undefined) return;
+    const code = String(rawB).trim();
+    if (!CONTRACT_CODE_RE.test(code)) return;
 
-    const code = String(bCell.v ?? '').trim();
-    if (!CONTRACT_CODE_RE.test(code)) continue;
+    // 取複價（H 欄 = 8）— 可能是公式 {formula, result}
+    const hCell = row.getCell(8);
+    let tableBAmount = 0;
+    const hv = hCell.value;
+    if (hv !== null && hv !== undefined) {
+      tableBAmount = (typeof hv === 'object' && hv?.result !== undefined)
+        ? Number(hv.result) || 0
+        : Number(hv) || 0;
+    }
 
-    // 取得複價（H 欄 = index 7）
-    const hAddr = XLSX.utils.encode_cell({ r, c: 7 });
-    const hCell = ws[hAddr];
-    const tableBAmount = hCell ? (Number(hCell.v) || 0) : 0;
+    // 取項目名稱（C 欄 = 3）
+    const cCell    = row.getCell(3);
+    const itemName = cCell.value ? String(cCell.value) : '';
 
-    // 取得項目名稱（C 欄 = index 2）
-    const cAddr = XLSX.utils.encode_cell({ r, c: 2 });
-    const itemName = ws[cAddr] ? String(ws[cAddr].v || '') : '';
-
-    const entry = tableAMap.get(code);
+    const entry       = tableAMap.get(code);
     const tableASum   = entry ? Math.round(entry.sum)  : null;
     const tableBRound = Math.round(tableBAmount);
-    const isDiscrepant = entry !== null && entry !== undefined && tableASum !== tableBRound;
-    const caseNos = entry ? Array.from(entry.caseNos).sort((a, b) => a - b) : [];
+    const isDiscrepant = !!entry && tableASum !== tableBRound;
+    const caseNos      = entry
+      ? Array.from(entry.caseNos).sort((a, b) => a - b)
+      : [];
 
-    results.push({ r, code, itemName, tableASum, tableBAmount: tableBRound, isDiscrepant, hasMatch: !!entry, caseNos });
+    results.push({ r: rowNumber, code, itemName, tableASum, tableBAmount: tableBRound, isDiscrepant, hasMatch: !!entry, caseNos });
 
-    // ── 標記紅色底色（整行 A–I，欄 0–8）────────────────────────────────
+    // ── 標記紅色底色（A–I 欄，欄 1–9）────────────────────────────────────
     if (isDiscrepant) {
-      const redFill = { patternType: 'solid', fgColor: { rgb: 'FFCCCC' } };
-      for (let c = 0; c <= 8; c++) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        if (!ws[addr]) ws[addr] = { v: '', t: 's', s: {} };
-        if (!ws[addr].s) ws[addr].s = {};
-        ws[addr].s = { ...ws[addr].s, fill: redFill };
+      const redFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCCCC' } };
+      for (let c = 1; c <= 9; c++) {
+        row.getCell(c).fill = redFill;
       }
     }
 
-    // ── 填入備註（I 欄 = index 8）───────────────────────────────────────
+    // ── 填入備註（I 欄 = 9）──────────────────────────────────────────────
     if (caseNos.length > 0) {
-      const iAddr = XLSX.utils.encode_cell({ r, c: 8 });
-      if (!ws[iAddr]) ws[iAddr] = { v: '', t: 's', s: {} };
-      ws[iAddr].v = caseNos.map(n => `案號${n}`).join('、');
-      ws[iAddr].t = 's';
+      row.getCell(9).value = caseNos.map(n => `案號${n}`).join('、');
     }
-  }
+  });
 
   // ── 檢查表A有但表B找不到的項次 ─────────────────────────────────────────
   tableAMap.forEach((entry, code) => {
     const found = results.some(res => res.code === code);
     if (!found) {
-      warnings.push(`合約項次 ${code} 在表A有資料（案號 ${Array.from(entry.caseNos).map(n=>`${n}`).join('、')}），但表B中找不到對應項次`);
+      warnings.push(
+        `合約項次 ${code} 在表A有資料（案號 ${Array.from(entry.caseNos).map(n => `${n}`).join('、')}），但表B中找不到對應項次`
+      );
     }
   });
 
-  const outputBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
-
-  return { results, warnings, outputBytes };
+  const outBuf = await workbook.xlsx.writeBuffer();
+  return { results, warnings, outputBytes: new Uint8Array(outBuf) };
 }

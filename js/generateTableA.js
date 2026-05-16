@@ -35,9 +35,9 @@ async function generateTableA(cases, rocYear, month) {
     type: 'pattern', pattern: 'solid',
     fgColor: { argb: 'FF46BDC6' },
   };
-  const LB_FILL = {                    // 淺藍（統計行，theme-8 tint-0.8）
+  const LB_FILL = {                    // 橙色（統計行）
     type: 'pattern', pattern: 'solid',
-    fgColor: { argb: 'FFBDD7EE' },
+    fgColor: { argb: 'FFFFE1CC' },
   };
 
   const TITLE_FONT  = () => ({ name: '微軟正黑體', size: 24, bold: true });
@@ -60,7 +60,7 @@ async function generateTableA(cases, rocYear, month) {
 
   // ── Row 1：大標題「提報修繕明細」────────────────────────────────────────────
   const r1 = ws.getRow(1);
-  r1.height = 50.1;
+  r1.height = 75;    // 目標 50pt × 1.5 = 75（ExcelJS px→pt 換算）
   for (let c = 1; c <= 14; c++) {
     const cell = r1.getCell(c);
     cell.font      = TITLE_FONT();
@@ -73,7 +73,7 @@ async function generateTableA(cases, rocYear, month) {
 
   // ── Row 2：公司名稱 | 月份標題 ──────────────────────────────────────────────
   const r2 = ws.getRow(2);
-  r2.height = 49.8;
+  r2.height = 75;    // 目標 50pt × 1.5 = 75
   for (let c = 1; c <= 14; c++) {
     const cell = r2.getCell(c);
     cell.font      = TITLE_FONT();
@@ -88,7 +88,7 @@ async function generateTableA(cases, rocYear, month) {
 
   // ── Row 3：欄標題 ────────────────────────────────────────────────────────────
   const r3 = ws.getRow(3);
-  r3.height = 49.95;
+  r3.height = 75;    // 目標 50pt × 1.5 = 75
   const headers = [
     '案號','序號','報修日期','報修單號','站別','地址',
     '故障說明','完工日期','合約項次','品項','單位','數量','單價','未稅金額小計(1)',
@@ -106,14 +106,43 @@ async function generateTableA(cases, rocYear, month) {
   // ── 資料列 ────────────────────────────────────────────────────────────────────
   let excelRow = 4;
 
+  /**
+   * 計算故障說明文字需要的額外列高（pt display）。
+   * G 欄寬 80.66，中文字 2 單位寬 → 每行 ~40 字，行高 ~20pt，上下內距 10pt。
+   * @param {string} text        故障說明文字
+   * @param {number} availPt     合併儲存格可用總高度（display pt）
+   * @returns {number} 需要額外增加的 pt（display），可能為 0
+   */
+  function extraHeightPt(text, availPt) {
+    // G 欄寬 80.66，微軟正黑體 16pt 中文字 ≈ 21px，
+    // Calibri 11pt digit ≈ 7px → 欄寬 ≈ 564px → 每行 ≈ 26 中文字
+    const CHARS_PER_LINE = 24;   // 保守值（26×0.9），兼顧混排與寬字符
+    const LINE_HEIGHT_PT = 24;   // 16pt 字體 × 1.5 行距
+    const PADDING_PT     = 8;    // 儲存格上下內距
+    const lines = text.split('\n').reduce(
+      (s, l) => s + Math.max(1, Math.ceil(l.length / CHARS_PER_LINE)), 0
+    );
+    const requiredPt = lines * LINE_HEIGHT_PT + PADDING_PT;
+    return Math.max(0, requiredPt - availPt);
+  }
+
   cases.forEach((cas, caseIdx) => {
-    const caseNo   = caseIdx + 1;
-    const items    = cas.items;
-    const startRow = excelRow;
+    const caseNo      = caseIdx + 1;
+    const items       = cas.items;
+    const startRow    = excelRow;
+    const isSingle    = items.length === 1;
+    const k           = items.length;
+
+    // 計算每列需要的高度（pt display）
+    const basePt      = isSingle ? 100 : 50;   // 預設每列顯示高度
+    const availPt     = k * basePt;             // 合併儲存格可用總高度
+    const extraTotal  = extraHeightPt(cas.故障說明, availPt);
+    const extraPerRow = extraTotal / k;          // 平均分配給每列
+    const heightPt    = basePt + extraPerRow;   // 每列最終顯示高度（pt）
 
     items.forEach((item, itemIdx) => {
       const row = ws.getRow(excelRow);
-      row.height = 100.05;
+      row.height = heightPt * 1.5;             // ExcelJS px→pt × 1.5
 
       const dc = (col, val, align = CENTER, numFmt = null) => {
         const cell = row.getCell(col);
@@ -162,14 +191,14 @@ async function generateTableA(cases, rocYear, month) {
 
   // ── 統計行 ────────────────────────────────────────────────────────────────────
   const sr = ws.getRow(excelRow);
-  sr.height = 64.95;
+  sr.height = 97.5;  // 65pt × 1.5 = 97.5
 
-  // A–H：無填色
+  // A–H：只保留上格線（作為資料區邊界），無填色
+  const TOP_BORDER = { top: { style: 'thin' } };
   for (let col = 1; col <= 8; col++) {
     const cell = sr.getCell(col);
-    cell.font      = STATS_FONT();
-    cell.border    = THIN_BORDER;
-    cell.alignment = CENTER;
+    cell.font   = STATS_FONT();
+    cell.border = TOP_BORDER;
   }
 
   // I–L：淺藍，合併，顯示「總計」
