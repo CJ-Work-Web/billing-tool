@@ -215,16 +215,23 @@ function renderDiffTable(results, warnings) {
     const tableADisplay = res.hasMatch ? fmtNum(res.tableASum) : '—';
     const notesDisplay  = res.caseNos.length > 0 ? res.caseNos.map(n=>`案號${n}`).join('、') : '—';
 
+    const tableAUnitDisplay = res.tableAUnits.length > 0 ? res.tableAUnits.join('/') : '—';
+    const tableBUnitDisplay = res.tableBUnit || '—';
+    const unitMismatch = res.hasMatch && res.tableAUnits.length > 0 && !res.tableAUnits.includes(res.tableBUnit);
+    const unitClass = unitMismatch ? 'text-rose-600 font-bold' : 'text-slate-600';
+
     return `<tr class="border-b border-slate-100 ${bg}">
       <td class="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">${res.code}</td>
       <td class="px-3 py-2 text-slate-600 max-w-[200px] truncate" title="${res.itemName}">${res.itemName}</td>
+      <td class="px-3 py-2 text-center ${unitClass} whitespace-nowrap">${tableAUnitDisplay}</td>
+      <td class="px-3 py-2 text-center ${unitClass} whitespace-nowrap">${tableBUnitDisplay}</td>
       <td class="px-3 py-2 text-right font-mono">${tableADisplay}</td>
       <td class="px-3 py-2 text-right font-mono">${fmtNum(res.tableBAmount)}</td>
       <td class="px-3 py-2 text-center">${statusBadge}</td>
       <td class="px-3 py-2 text-slate-600 text-xs">${notesDisplay}</td>
     </tr>`;
   });
-  tbody.innerHTML = rows.join('') || '<tr><td colspan="6" class="text-center py-6 text-slate-400">未找到 B 項修繕項次</td></tr>';
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="8" class="text-center py-6 text-slate-400">未找到 B 項修繕項次</td></tr>';
 }
 
 // ── 下載處理後的表B ─────────────────────────────────────────────────────────

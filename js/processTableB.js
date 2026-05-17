@@ -15,17 +15,18 @@ async function processTableB(tableBArrayBuffer, cases) {
   await workbook.xlsx.load(tableBArrayBuffer);
 
   // ── 建立表A的合約項次彙總 map ──────────────────────────────────────────
-  // key: 合約項次代碼  value: { sum: number, caseNos: Set<number> }
+  // key: 合約項次代碼  value: { sum: number, caseNos: Set<number>, units: Set<string> }
   const tableAMap = new Map();
   cases.forEach((cas, idx) => {
     const caseNo = idx + 1;
     cas.items.forEach(item => {
       const code = item.合約項次;
       if (!code) return;
-      if (!tableAMap.has(code)) tableAMap.set(code, { sum: 0, caseNos: new Set() });
+      if (!tableAMap.has(code)) tableAMap.set(code, { sum: 0, caseNos: new Set(), units: new Set() });
       const entry = tableAMap.get(code);
       entry.sum += item.未稅小計;
       entry.caseNos.add(caseNo);
+      if (item.單位) entry.units.add(item.單位);
     });
   });
 
@@ -56,6 +57,10 @@ async function processTableB(tableBArrayBuffer, cases) {
     const cCell    = row.getCell(3);
     const itemName = cCell.value ? String(cCell.value) : '';
 
+    // 取單位（D 欄 = 4）
+    const dCell    = row.getCell(4);
+    const tableBUnit = dCell.value ? String(dCell.value).trim() : '';
+
     const entry       = tableAMap.get(code);
     const tableASum   = entry ? Math.round(entry.sum)  : null;
     const tableBRound = Math.round(tableBAmount);
@@ -63,8 +68,9 @@ async function processTableB(tableBArrayBuffer, cases) {
     const caseNos      = entry
       ? Array.from(entry.caseNos).sort((a, b) => a - b)
       : [];
+    const tableAUnits  = entry ? Array.from(entry.units) : [];
 
-    results.push({ r: rowNumber, code, itemName, tableASum, tableBAmount: tableBRound, isDiscrepant, hasMatch: !!entry, caseNos });
+    results.push({ r: rowNumber, code, itemName, tableASum, tableBAmount: tableBRound, tableBUnit, tableAUnits, isDiscrepant, hasMatch: !!entry, caseNos });
 
     // ── 標記紅色底色（A–I 欄，欄 1–9）────────────────────────────────────
     if (isDiscrepant) {
